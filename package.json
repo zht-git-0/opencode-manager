@@ -6,6 +6,10 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build && electron-builder",
+        "build:win": "vite build && electron-builder --win",
+        "build:mac": "vite build && electron-builder --mac",
+        "build:linux": "vite build && electron-builder --linux",
+        "build:all": "vite build && electron-builder -wml",
         "start": "electron ."
     },
     "keywords": [],
@@ -40,6 +44,15 @@
         "nsis": {
             "oneClick": false,
             "allowToChangeInstallationDirectory": true
+        },
+        "mac": {
+            "target": "dmg",
+            "icon": "public/icon.png"
+        },
+        "linux": {
+            "target": "AppImage",
+            "icon": "public/icon.png",
+            "category": "Development"
         }
     }
 }
