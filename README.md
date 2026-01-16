@@ -1,6 +1,6 @@
 # Opencode Manager
 
-![Opencode Manager](./public/image.png)
+![Opencode Manager](./public/image2.png)
 
 Opencode Manager 是一个用于管理 Opencode 配置文件 (`opencode.json`) 的桌面应用程序。它允许您轻松查看、编辑、添加和删除 AI 模型提供商及其模型配置。
 
