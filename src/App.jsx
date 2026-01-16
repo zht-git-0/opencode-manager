@@ -1,46 +1,8 @@
 import React, { useState, useEffect } from 'react';
 
 // Translations
-const translations = {
-    zh: {
-        loading: '加载中...',
-        error: '错误',
-        invalidConfig: '配置无效',
-        saved: '已保存',
-        autoSaveFailed: '自动保存失败',
-        addProvider: '添加供应商',
-        deleteProvider: '删除供应商',
-        confirmDelete: '确定要删除该供应商吗？',
-        options: '选项',
-        baseUrl: '基础 URL (Base URL)',
-        providerName: '供应商名称',
-        models: '模型列表',
-        addModel: '+ 添加模型',
-        modelKey: '模型标识 (完整名)',
-        keyExists: '该模型标识已存在',
-        newProvider: '新供应商',
-        newModel: '新模型',
-    },
-    en: {
-        loading: 'Loading...',
-        error: 'Error',
-        invalidConfig: 'Invalid Configuration',
-        saved: 'Saved',
-        autoSaveFailed: 'Auto-save failed',
-        addProvider: 'Add Provider',
-        deleteProvider: 'Delete Provider',
-        confirmDelete: 'Are you sure you want to delete this provider?',
-        options: 'Options',
-        baseUrl: 'Base URL',
-        providerName: 'Provider Name',
-        models: 'Models',
-        addModel: '+ Add Model',
-        modelKey: 'Model Key (Full Name)',
-        keyExists: 'This model key already exists',
-        newProvider: 'New Provider',
-        newModel: 'New Model',
-    }
-};
+import { translations } from './translations';
+
 
 function App() {
     const [lang, setLang] = useState('zh');
@@ -50,17 +12,43 @@ function App() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [statusMessage, setStatusMessage] = useState('');
+    const [apiKeyInputs, setApiKeyInputs] = useState({}); // Store API key input values per provider
 
     useEffect(() => {
         loadConfig();
     }, []);
+
+    // Fetch existing env var value when provider is selected
+    useEffect(() => {
+        if (selectedProvider && config?.provider?.[selectedProvider]) {
+            const providerData = config.provider[selectedProvider];
+            const envName = (providerData.name || selectedProvider).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY';
+            window.electronAPI.getEnvVar(envName).then(value => {
+                if (value) {
+                    setApiKeyInputs(prev => ({ ...prev, [selectedProvider]: value }));
+                }
+            });
+        }
+    }, [selectedProvider, config]);
 
     // Auto-save when config changes
     useEffect(() => {
         if (config && !loading) {
             const saveTimeout = setTimeout(async () => {
                 try {
-                    const result = await window.electronAPI.saveConfig(config);
+                    // Auto update apiKey for all providers
+                    const configToSave = { ...config };
+                    if (configToSave.provider) {
+                        Object.keys(configToSave.provider).forEach(key => {
+                            const provider = configToSave.provider[key];
+                            if (!provider.options) provider.options = {};
+                            // Always enforce the env var naming convention based on NAME
+                            const sourceName = provider.name || key;
+                            const envVarName = sourceName.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY';
+                            provider.options.apiKey = `{env:${envVarName}}`;
+                        });
+                    }
+                    const result = await window.electronAPI.saveConfig(configToSave);
                     if (result.error) {
                         console.error('Auto-save failed:', result.error);
                         setStatusMessage(t.autoSaveFailed);
@@ -95,7 +83,21 @@ function App() {
     const handleSave = async () => {
         try {
             setStatusMessage('保存中...');
-            const result = await window.electronAPI.saveConfig(config);
+
+            // Auto update apiKey for all providers
+            const configToSave = { ...config };
+            if (configToSave.provider) {
+                Object.keys(configToSave.provider).forEach(key => {
+                    const provider = configToSave.provider[key];
+                    if (!provider.options) provider.options = {};
+                    // Always enforce the env var naming convention based on NAME
+                    const sourceName = provider.name || key;
+                    const envVarName = sourceName.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY';
+                    provider.options.apiKey = `{env:${envVarName}}`;
+                });
+            }
+
+            const result = await window.electronAPI.saveConfig(configToSave);
             if (result.error) throw new Error(result.error);
             setStatusMessage('保存成功！');
             setTimeout(() => setStatusMessage(''), 3000);
@@ -132,6 +134,44 @@ function App() {
                 }
             }
         }));
+    };
+
+    const updateProviderNpm = (value) => {
+        setConfig(prev => ({
+            ...prev,
+            provider: {
+                ...prev.provider,
+                [selectedProvider]: {
+                    ...prev.provider[selectedProvider],
+                    npm: value
+                }
+            }
+        }));
+    };
+
+    const renameProviderKey = (newKey) => {
+        const oldKey = selectedProvider;
+        if (oldKey === newKey || !newKey.trim()) return;
+
+        if (config.provider[newKey]) {
+            alert(t.idExists);
+            return;
+        }
+
+        const newProviders = {};
+        for (const [k, v] of Object.entries(config.provider)) {
+            if (k === oldKey) {
+                newProviders[newKey] = v;
+            } else {
+                newProviders[k] = v;
+            }
+        }
+
+        setConfig(prev => ({
+            ...prev,
+            provider: newProviders
+        }));
+        setSelectedProvider(newKey);
     };
 
     const updateModel = (modelKey, field, value) => {
@@ -294,13 +334,81 @@ function App() {
                                         type="text"
                                         value={currentProviderData.name || ''}
                                         onChange={(e) => updateProviderName(e.target.value)}
+                                        onBlur={(e) => renameProviderKey(e.target.value.trim())}
                                         placeholder={t.providerName}
                                         style={{ fontSize: '1.8rem', fontWeight: 'bold', background: 'transparent', border: 'none', borderBottom: '2px solid var(--accent-color)', color: 'var(--text-primary)', outline: 'none', padding: '4px 0' }}
                                     />
-                                    <span className="badge">{currentProviderData.npm}</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <select
+                                            value={currentProviderData.npm || '@ai-sdk/openai-compatible'}
+                                            onChange={(e) => updateProviderNpm(e.target.value)}
+                                            style={{ background: 'var(--input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', borderRadius: '6px', padding: '4px 8px', fontSize: '0.9rem', cursor: 'pointer' }}
+                                        >
+                                            <option value="@ai-sdk/openai-compatible">@ai-sdk/openai-compatible</option>
+                                            <option value="@ai-sdk/anthropic">@ai-sdk/anthropic</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <button className="delete-btn" onClick={deleteProvider} style={{ fontSize: '1rem', border: '1px solid currentColor', borderRadius: '4px', padding: '4px 8px' }} title={t.deleteProvider}>{t.deleteProvider}</button>
                             </header>
+
+                            <div style={{ marginBottom: '1.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.8rem', borderRadius: '6px', border: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>{t.envVar}:</span>
+                                    <code style={{ color: 'var(--accent-color)', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                                        {(currentProviderData.name || selectedProvider).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY'}
+                                    </code>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const envName = (currentProviderData.name || selectedProvider).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY';
+                                        navigator.clipboard.writeText(envName);
+                                        const btn = document.getElementById('copy-btn-' + selectedProvider);
+                                        if (btn) {
+                                            const originalText = btn.innerText;
+                                            btn.innerText = t.copied;
+                                            setTimeout(() => btn.innerText = originalText, 1500);
+                                        }
+                                    }}
+                                    id={'copy-btn-' + selectedProvider}
+                                    style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
+                                >
+                                    Copy
+                                </button>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem', background: 'rgba(0,0,0,0.15)', padding: '0.8rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{t.apiKeyValue}:</label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <input
+                                        type="text"
+                                        value={apiKeyInputs[selectedProvider] || ''}
+                                        onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [selectedProvider]: e.target.value }))}
+                                        placeholder="sk-xxxx..."
+                                        style={{ flex: 1, fontFamily: 'monospace' }}
+                                    />
+                                    <button
+                                        onClick={async () => {
+                                            const envName = (currentProviderData.name || selectedProvider).toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY';
+                                            const keyValue = apiKeyInputs[selectedProvider];
+                                            if (!keyValue) return;
+                                            setStatusMessage(t.setting);
+                                            const result = await window.electronAPI.setEnvVar(envName, keyValue);
+                                            if (result.success) {
+                                                setStatusMessage(t.setSuccess);
+                                                // Keep the value in the input
+                                            } else {
+                                                setStatusMessage(t.setFailed + ': ' + (result.error || ''));
+                                            }
+                                            setTimeout(() => setStatusMessage(''), 5000);
+                                        }}
+                                        style={{ background: 'var(--accent-color)', border: 'none', color: '#000', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
+                                    >
+                                        {t.setEnvVar}
+                                    </button>
+                                </div>
+                            </div>
+
 
                             <section className="config-section">
                                 <h3>{t.options}</h3>

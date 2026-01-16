@@ -102,4 +102,71 @@ ipcMain.handle('save-config', async (event, newConfig) => {
     }
 });
 
+// Get environment variable value
+ipcMain.handle('get-env-var', async (event, name) => {
+    return process.env[name] || '';
+});
+
+// Set environment variable (cross-platform)
+const { exec } = require('child_process');
+
+ipcMain.handle('set-env-var', async (event, { name, value }) => {
+    return new Promise((resolve) => {
+        if (process.platform === 'win32') {
+            // Windows: Use setx to set user environment variable
+            exec(`setx ${name} "${value}"`, (error, stdout, stderr) => {
+                if (error) {
+                    console.error('Error setting env var:', error);
+                    resolve({ error: error.message });
+                } else {
+                    console.log('Env var set:', stdout);
+                    // Update current process env immediately so changes are visible without restart
+                    process.env[name] = value;
+                    resolve({ success: true });
+                }
+            });
+        } else {
+            // macOS/Linux: Append to shell profile
+            const homeDir = os.homedir();
+            let profilePath;
+
+            // Determine which shell profile to use
+            if (process.platform === 'darwin') {
+                // macOS: prefer .zshrc (default on macOS Catalina+), fallback to .bash_profile
+                profilePath = fs.existsSync(path.join(homeDir, '.zshrc'))
+                    ? path.join(homeDir, '.zshrc')
+                    : path.join(homeDir, '.bash_profile');
+            } else {
+                // Linux: prefer .bashrc, fallback to .profile
+                profilePath = fs.existsSync(path.join(homeDir, '.bashrc'))
+                    ? path.join(homeDir, '.bashrc')
+                    : path.join(homeDir, '.profile');
+            }
+
+            try {
+                const exportLine = `\nexport ${name}="${value}"\n`;
+                const content = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf-8') : '';
+
+                // Check if variable already exists, update it
+                const regex = new RegExp(`^export ${name}=.*$`, 'm');
+                let newContent;
+                if (regex.test(content)) {
+                    newContent = content.replace(regex, `export ${name}="${value}"`);
+                } else {
+                    newContent = content + exportLine;
+                }
+
+                fs.writeFileSync(profilePath, newContent, 'utf-8');
+                console.log(`Env var written to ${profilePath}`);
+                // Update current process env immediately
+                process.env[name] = value;
+                resolve({ success: true, profilePath });
+            } catch (error) {
+                console.error('Error writing to profile:', error);
+                resolve({ error: error.message });
+            }
+        }
+    });
+});
+
 app.whenReady().then(createWindow)
